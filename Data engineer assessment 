@@ -1,0 +1,262 @@
+1•Department Create:
+ app.post('/departments', async (req, res) => {
+  const department = new Department(req.body);
+
+  try {
+    const savedDepartment = await department.save();
+    res.status(201).json(savedDepartment);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+2.Department Update:
+app.put('/departments/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const updatedDepartment = await Department.findByIdAndUpdate(
+      id,
+      req.body,
+      { new: true }
+    );
+    res.status(200).json(updatedDepartment);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+3.Employee Create:
+app.post('/employees', async (req, res) => {
+  const employee = new Employee(req.body);
+
+  try {
+    const savedEmployee = await employee.save();
+    res.status(201).json(savedEmployee);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+4.Employee Update:
+app.put('/employees/:email', async (req, res) => {
+  const { email } = req.params;
+
+  try {
+    const updatedEmployee = await Employee.findOneAndUpdate(
+      { email },
+      req.body,
+      { new: true }
+    );
+    res.status(200).json(updatedEmployee);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+5.Employee Delete:
+app.delete('/employees/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    await Employee.findByIdAndDelete(id);
+    res.status(204).send();
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+6.Payout Upload:
+const multer = require('multer');
+
+const upload = multer({
+  dest: 'uploads/',
+  limits: {
+    fileSize: 10000000 // limit file size to 10MB
+  }
+});
+
+app.post('/payouts', upload.single('file'), async (req, res) => {
+  const { file } = req;
+
+  if (!file) {
+    return res.status(400).json({ message: 'No file provided' });
+  }
+
+  const rows = file.buffer.toString().split('\n');
+  rows.shift(); // remove the header row
+
+  const payouts = [];
+
+  for (const row of rows) {
+    const [date, email, fixedAmount, variableAmount, deductions] = row.split(',');
+    payouts.push({
+      payoutDate: new Date(date),
+      employee: { email },
+      fixedAmount: parseFloat(fixedAmount),
+      variableAmount: parseFloat(variableAmount),
+      deductions: parseFloat(deductions)
+    });
+  }
+
+  try {
+    const savedPayouts = await Payout.insertMany(payouts);
+    res.status(201).json(savedPayouts);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+database query service:
+
+1.Get all Employees, with their department name and their Department Head Name:
+
+app.get('/employees/with-department-head', async (req, res) => {
+  try {
+    const employees = await Employee
+      .find()
+      .populate({
+        path: 'department',
+        populate: {
+          path: 'deptHead'
+        }
+      });
+    res.status(200).json(employees);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+2.Get employees total payout for the year 2023:
+
+app.get('/employees/payouts/2023', async (req, res) => {
+  try {
+    const startDate = new Date('2023-01-01');
+    const endDate = new Date('2023-12-31');
+
+    const payouts = await Payout.find({
+      payoutDate: {
+        $gte: startDate,
+        $lte: endDate
+      }
+    });
+
+    const payoutsByEmployee = _.groupBy(payouts, 'employee.email');
+
+    const result = [];
+
+    for (const [email, payouts] of Object.entries(payoutsByEmployee)) {
+      const totalPayout = payouts.reduce((acc, curr) => {
+        return acc + (curr.fixedAmount + curr.variableAmount) - curr.deductions;
+      }, 0);
+
+      result.push({
+        email,
+        totalPayout
+      });
+    }
+
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+
+3.Get Top employees who received the highest variableAmount for each month:
+
+app.get('/employees/top-variable-payouts', async (req, res) => {
+  try {
+    const months = [
+      { month: 1, year: 2023 },
+      { month: 2, year: 2023 },
+      { month: 3, year: 2023 },
+      { month: 4, year: 2023 },
+      { month: 5, year: 2023 },
+      { month: 6, year: 2023 },
+      { month: 7, year: 2023 },
+      { month: 8, year: 2023 },
+      { month: 9, year: 2023 },
+      { month: 10, year: 2023 },
+      { month: 11, year: 2023 },
+      { month: 12, year: 2023 },
+    ];
+
+    const topEmployeesByMonth = [];
+
+    for (const month of months) {
+      const startDate = new Date(month.year, month.month - 1, 1);
+      const endDate = new Date(month.year, month.month, 0);
+
+      const payouts = await Payout.find({
+        payoutDate: {
+          $gte: startDate,
+          $lte: endDate
+        }
+      });
+
+      const payoutsByEmployee = _.groupBy(payouts, 'employee.email');
+
+      const maxVariableAmount = _.maxBy(payouts, 'variableAmount').variableAmount;
+
+      const result = [];
+
+      for (const [email, payouts] of Object.entries(payoutsByEmployee)) {
+        const totalVariableAmount = payouts.reduce((acc, curr) => {
+          return acc + curr.variableAmount;
+        }, 0);
+
+        if (totalVariableAmount === maxVariableAmount) {
+          const employee = await Employee.findOne({ email });
+          const department = await Department.findById(employee.department);
+          result.push({
+            month: `${month.month}/${month.year}`,
+            employeeName: `${employee.firstName} ${employee.lastName}`,
+            departmentName: department.name,
+            totalVariableAmount
+          });
+        }
+      }
+
+      topEmployeesByMonth.push(result);
+    }
+
+    res.status(200).json(topEmployeesByMonth);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+
+4.Get all employees who didn't get any payout for May 2023 and June 2023:
+
+app.get('/employees/no-payout', async (req, res) => {
+  try {
+    const startDate = new Date('2023-05-01');
+    const endDate = new Date('2023-06-30');
+
+    const employees = await Employee.find({});
+    const employeeEmails = employees.map(employee => employee.email);
+
+    const payouts = await Payout.find({
+      payoutDate: {
+        $gte: startDate,
+        $lte: endDate
+      }
+    });
+    const payoutEmails = payouts.map(payout => payout.employee.email);
+
+    const result = _.difference(employeeEmails, payoutEmails);
+
+    const employeesWithNoPayout = await Employee.find({
+      email: {
+        $in: result
+      }
+    });
+
+    res.status(200).json(employeesWithNoPayout);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
